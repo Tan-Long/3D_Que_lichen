@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+venv*/
+.env
+.env.*
+!.env.example
+
+# Local data / uploads (large)
+uploads/
+c9ae76fff8/
+*.zip
+
+# DB / caches
+*.db
+*.sqlite3
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Logs
+*.log

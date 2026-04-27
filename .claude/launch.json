@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "3D-Que Preview v2",
+      "runtimeExecutable": "E:/3D_Que/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "07_preview.py",
+        "--port",
+        "8055"
+      ],
+      "port": 8055
+    }
+  ]
+}

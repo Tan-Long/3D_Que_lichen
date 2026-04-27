@@ -1,0 +1,20 @@
+2. Bộ xử lý Stray Visualizer (kekeblom/StrayVisualizer)
+(Lưu ý: Repo này nằm trên GitHub của Kenneth Blomqvist - nhà phát triển chính của Stray Robots).
+Đây là mã nguồn hữu ích nhất cho bạn lúc này để xử lý trực tiếp các file bạn vừa giải nén. Nó bao gồm các đoạn script Python thiết lập sẵn để:
+
+Dựng và xem trực tiếp đám mây điểm (point cloud) và quỹ đạo di chuyển của camera trong không gian.
+
+Chạy tích hợp Open3D để ghép các frame lại thành một lưới 3D (3D mesh) hoàn chỉnh.
+
+Ghép các file ảnh chiều sâu rời rạc thành một video.
+
+Chuyển đổi dữ liệu sang định dạng ROS bag (rất phổ biến nếu bạn làm về Robotics).
+
+Link: github.com/kekeblom/StrayVisualizer
+
+3. Công cụ gán nhãn 3D (strayrobots/3d-annotation-tool)
+Nếu bạn định dùng tập dữ liệu vừa chụp để huấn luyện AI nhận diện vật thể trong không gian 3D, hãng cung cấp sẵn một phần mềm có giao diện trực quan (GUI).
+
+Chức năng: Mở file quét lên và khoanh vùng (bounding box), đánh dấu điểm (keypoint) trực tiếp lên các vật thể 3D.
+
+Link: github.com/strayrobots/3d-annotation-tool

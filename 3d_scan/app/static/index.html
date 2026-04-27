@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Scan Processor</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header>
+            <h1>3D Scan Processor</h1>
+            <p class="subtitle">Upload a Stray Scanner dataset to generate and view 3D meshes</p>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tab-nav">
+            <button id="tab-dashboard" class="tab-btn active" data-tab="dashboard">Dashboard</button>
+            <button id="tab-scan" class="tab-btn" data-tab="scan">Scan</button>
+            <button id="tab-samples" class="tab-btn" data-tab="samples">Samples</button>
+        </nav>
+
+        <!-- ========== DASHBOARD TAB ========== -->
+        <div id="tab-content-dashboard" class="tab-content">
+            <div id="dashboard-container"></div>
+        </div>
+
+        <!-- ========== SCAN TAB (contains upload/progress/viewer/error) ========== -->
+        <div id="tab-content-scan" class="tab-content hidden">
+
+        <!-- Quick PLY Loader -->
+        <section id="ply-loader-section" class="ply-loader-card">
+            <h3>Open PLY</h3>
+            <div class="ply-loader-mode">
+                <label>
+                    <input type="radio" name="ply-load-mode" value="sample" checked>
+                    By Sample
+                </label>
+                <label>
+                    <input type="radio" name="ply-load-mode" value="filename">
+                    By Filename
+                </label>
+            </div>
+
+            <div id="ply-mode-sample" class="ply-loader-fields">
+                <select id="ply-sample-select" class="input"></select>
+                <select id="ply-file-select" class="input"></select>
+                <button id="btn-open-ply-sample" class="btn">Open PLY</button>
+            </div>
+
+            <div id="ply-mode-filename" class="ply-loader-fields hidden">
+                <input id="ply-filename-input" class="input" type="text" placeholder="e.g. mesh.ply or scan_01.ply">
+                <button id="btn-open-ply-filename" class="btn">Find & Open</button>
+            </div>
+            <p id="ply-loader-hint" class="ply-loader-hint"></p>
+        </section>
+
+        <!-- Upload Section -->
+        <section id="upload-section">
+            <div id="drop-zone" class="drop-zone">
+                <div class="drop-zone-content">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <p>Drag & drop your <strong>.zip</strong> dataset here</p>
+                    <p class="hint">or click to browse</p>
+                </div>
+                <input type="file" id="file-input" accept=".zip" hidden>
+            </div>
+        </section>
+
+        <!-- Progress Section -->
+        <section id="progress-section" class="hidden">
+            <div class="progress-card">
+                <h2 id="progress-step">Preparing...</h2>
+                <div class="progress-bar-container">
+                    <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+                </div>
+                <p id="progress-pct" class="progress-pct">0%</p>
+                <p id="progress-message" class="progress-message">Waiting...</p>
+            </div>
+        </section>
+
+        <!-- Viewer Section -->
+        <section id="viewer-section" class="hidden">
+            <!-- Main toolbar -->
+            <div class="viewer-toolbar">
+                <button id="btn-mesh" class="btn active">Mesh</button>
+                <button id="btn-pointcloud" class="btn">Point Cloud</button>
+                <div class="toolbar-sep"></div>
+                <button id="btn-low-quality" class="btn">Low Quality</button>
+                <button id="btn-edit" class="btn">Edit Mode</button>
+                <button id="btn-reset" class="btn btn-secondary">Reset View</button>
+            </div>
+
+            <!-- Edit toolbar (shown in edit mode) -->
+            <div id="edit-toolbar" class="viewer-toolbar edit-toolbar hidden">
+                <span id="edit-hint" class="edit-hint">Drag to select regions</span>
+                <span id="selection-count" class="selection-info">0 selected</span>
+                <button id="btn-delete" class="btn btn-danger" disabled>Delete Selected</button>
+                <button id="btn-clear-sel" class="btn" disabled>Clear</button>
+                <div class="toolbar-sep"></div>
+                <button id="btn-save-edit" class="btn btn-primary">Save Changes</button>
+                <button id="btn-reset-original" class="btn">Reset Original</button>
+                <button id="btn-refine" class="btn btn-primary">Refine (RGB)</button>
+                <button id="btn-exit-edit" class="btn btn-secondary">Exit Edit</button>
+            </div>
+
+            <div id="viewer-container"></div>
+            <p class="viewer-hint">Left-click drag: <span id="hint-action">rotate</span> | Right-click drag: pan | Scroll: zoom</p>
+        </section>
+
+        <!-- Error Section -->
+        <section id="error-section" class="hidden">
+            <div class="error-card">
+                <h2>Error</h2>
+                <p id="error-message"></p>
+                <button id="btn-retry" class="btn">Try Again</button>
+            </div>
+        </section>
+
+        </div><!-- end tab-content-scan -->
+
+        <!-- ========== SAMPLES TAB ========== -->
+        <div id="tab-content-samples" class="tab-content hidden">
+
+            <!-- Save sample form (shown after processing) -->
+            <div id="save-sample-bar" class="save-sample-bar hidden">
+                <input type="text" id="sample-name-input" class="input" placeholder="Enter sample name...">
+                <button id="btn-save-sample" class="btn btn-primary">Save as Sample</button>
+            </div>
+
+            <!-- Samples sort controls -->
+            <div id="samples-sort-bar" class="samples-sort-bar">
+                <span class="samples-sort-label">Sort by</span>
+                <button class="btn samples-sort-key active" data-sort-key="name">Name</button>
+                <button class="btn samples-sort-key" data-sort-key="status">Status</button>
+                <button class="btn samples-sort-key" data-sort-key="files">File</button>
+                <button class="btn samples-sort-key" data-sort-key="created">Created</button>
+                <button id="samples-sort-order" class="btn samples-sort-order" title="Toggle sort order">↑</button>
+            </div>
+
+            <!-- Sample list -->
+            <div id="samples-list" class="samples-list">
+                <p class="empty-hint">No samples saved yet. Process a scan and save it here.</p>
+            </div>
+        </div><!-- end tab-content-samples -->
+
+    </div>
+
+    <!-- Three.js from CDN -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module" src="/app.js"></script>
+</body>
+</html>

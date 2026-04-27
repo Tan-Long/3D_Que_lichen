@@ -1,0 +1,28 @@
+.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+
+# Local runtime files
+.preview.pid
+
+# Nested app virtual environment
+3d_scan/venv311/
+
+# Raw/input datasets
+Raw_data/
+missing_data/
+
+# Large geometry and generated artifacts
+*.ply
+*.obj
+*.stl
+*.las
+*.laz
+*.pcd
+
+# Generated outputs/reports
+export_lichen_data.csv
+raw_data_validation_report.json
