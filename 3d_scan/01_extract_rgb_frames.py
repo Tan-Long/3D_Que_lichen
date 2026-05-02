@@ -11,10 +11,16 @@ Usage:
 
 import argparse
 import os
+import shutil
 import subprocess
 
 
 def extract_frames(dataset_dir: str) -> None:
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError(
+            "ffmpeg not found in PATH. "
+            "Install it on the server: sudo apt install ffmpeg"
+        )
     video_path = os.path.join(dataset_dir, "rgb.mp4")
     rgb_dir = os.path.join(dataset_dir, "rgb")
     os.makedirs(rgb_dir, exist_ok=True)

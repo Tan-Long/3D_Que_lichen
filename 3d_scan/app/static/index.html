@@ -1,165 +1,373 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Scan Processor</title>
-    <link rel="stylesheet" href="/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lichen Scanner</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    :root {
+      --border-color: #e5e5e5;
+      --border: 0.5px solid #e5e5e5;
+      --radius-card: 10px;
+      --radius-el: 6px;
+      --bg-card: #ffffff;
+      --bg-page: #f5f5f5;
+      --bg-sidebar: #fafafa;
+      --accent: #185FA5;
+      --accent-light: #E6F1FB;
+      --text-primary: #111111;
+      --text-secondary: #666666;
+      --badge-queued-bg: #f0f0f0;
+      --badge-queued-fg: #555;
+      --badge-processing-bg: #FFF4E0;
+      --badge-processing-fg: #b45309;
+      --badge-done-bg: #E6F4EA;
+      --badge-done-fg: #1a7f37;
+      --badge-error-bg: #FDECEA;
+      --badge-error-fg: #c0392b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --border-color: #2a2a2a;
+        --border: 0.5px solid #2a2a2a;
+        --bg-card: #1a1a1a;
+        --bg-page: #111111;
+        --bg-sidebar: #161616;
+        --text-primary: #f0f0f0;
+        --text-secondary: #888888;
+        --badge-queued-bg: #2a2a2a;
+        --badge-queued-fg: #aaa;
+        --badge-processing-bg: #2d2200;
+        --badge-processing-fg: #f0a840;
+        --badge-done-bg: #0d2b14;
+        --badge-done-fg: #4ade80;
+        --badge-error-bg: #2d0d0d;
+        --badge-error-fg: #f87171;
+      }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      background: var(--bg-page);
+      color: var(--text-primary);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      background: var(--bg-sidebar);
+      border-right: var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+    }
+    #sidebar-logo {
+      padding: 20px 16px 16px;
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text-secondary);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      border-bottom: var(--border);
+    }
+    #sidebar-nav {
+      display: flex;
+      flex-direction: column;
+      padding: 8px 0;
+      flex: 1;
+    }
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 13px;
+      border-radius: 0;
+      transition: background 0.1s, color 0.1s;
+      cursor: pointer;
+      border: none;
+      background: none;
+      text-align: left;
+      width: 100%;
+    }
+    .nav-link:hover { background: var(--border-color); color: var(--text-primary); }
+    .nav-link.active { color: var(--accent); background: var(--accent-light); font-weight: 500; }
+    @media (prefers-color-scheme: dark) {
+      .nav-link.active { background: rgba(24,95,165,0.15); }
+    }
+    #main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+    /* Cards */
+    .card {
+      background: var(--bg-card);
+      border: var(--border);
+      border-radius: var(--radius-card);
+      padding: 16px;
+    }
+    .card + .card { margin-top: 12px; }
+    /* Form elements */
+    .input {
+      width: 100%;
+      padding: 7px 10px;
+      border: var(--border);
+      border-radius: var(--radius-el);
+      background: var(--bg-card);
+      color: var(--text-primary);
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+    }
+    .input:focus { border-color: var(--accent); }
+    .btn {
+      padding: 7px 14px;
+      border: var(--border);
+      border-radius: var(--radius-el);
+      background: var(--bg-card);
+      color: var(--text-primary);
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.1s;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--border-color); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { background: #1450a0; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    /* Status badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .badge-queued { background: var(--badge-queued-bg); color: var(--badge-queued-fg); }
+    .badge-processing { background: var(--badge-processing-bg); color: var(--badge-processing-fg); }
+    .badge-complete, .badge-done { background: var(--badge-done-bg); color: var(--badge-done-fg); }
+    .badge-error { background: var(--badge-error-bg); color: var(--badge-error-fg); }
+    /* Progress bar */
+    .progress-track {
+      height: 4px;
+      background: var(--border-color);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    /* Skeleton loader */
+    .skeleton {
+      background: var(--border-color);
+      border-radius: var(--radius-el);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    /* Error panel */
+    .error-panel {
+      padding: 12px;
+      background: var(--badge-error-bg);
+      border-radius: var(--radius-el);
+      border: var(--border);
+      font-size: 12px;
+    }
+    .error-panel-title { font-weight: 600; color: var(--badge-error-fg); margin-bottom: 4px; }
+    .error-panel-log {
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: var(--badge-error-fg);
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    .error-panel-hint { margin-top: 8px; color: var(--badge-error-fg); }
+    /* Info panel */
+    .info-panel {
+      padding: 20px;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+    /* Grid layout helpers */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    @media (max-width: 900px) { .grid-2, .grid-4 { grid-template-columns: 1fr; } }
+    /* Separator */
+    .sep { border: none; border-top: var(--border); margin: 12px 0; }
+    /* Label */
+    .label { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+    /* Utility */
+    .hidden { display: none !important; }
+    .text-secondary { color: var(--text-secondary); }
+    .font-mono { font-family: monospace; }
+    /* Back link */
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 13px;
+      margin-bottom: 16px;
+      text-decoration: none;
+    }
+    .back-link:hover { color: var(--text-primary); }
+    /* View header */
+    .view-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
+    /* Drop zone */
+    .drop-zone {
+      border: 2px dashed var(--border-color);
+      border-radius: var(--radius-card);
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-light);
+    }
+    @media (prefers-color-scheme: dark) {
+      .drop-zone:hover, .drop-zone.dragover { background: rgba(24,95,165,0.1); }
+    }
+    /* Spinning indicator */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border: 2px solid var(--badge-processing-fg);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+    /* Stage stepper */
+    .stage-list { list-style: none; padding: 0; margin: 0; }
+    .stage-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 0;
+      font-size: 13px;
+      border-bottom: var(--border);
+    }
+    .stage-item:last-child { border-bottom: none; }
+    .stage-icon { width: 18px; text-align: center; flex-shrink: 0; }
+    .stage-name { flex: 1; }
+    .stage-duration { color: var(--text-secondary); font-size: 12px; font-family: monospace; }
+    .stage-done { color: var(--badge-done-fg); }
+    .stage-running { color: var(--badge-processing-fg); }
+    .stage-waiting { color: var(--text-secondary); }
+    /* Summary stat card */
+    .stat-card { padding: 14px 16px; }
+    .stat-label { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+    .stat-value { font-size: 22px; font-weight: 600; }
+    .stat-unit { font-size: 13px; font-weight: 400; color: var(--text-secondary); }
+    /* Coverage bar */
+    .cov-bar-track {
+      height: 6px;
+      background: var(--border-color);
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 6px 0 4px;
+    }
+    .cov-bar-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+    /* Metadata rows */
+    .meta-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: var(--border); font-size: 13px; }
+    .meta-row:last-child { border-bottom: none; }
+    .meta-key { color: var(--text-secondary); }
+    .meta-val { font-weight: 500; text-align: right; }
+    /* Sample grid */
+    .sample-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    /* filter bar */
+    .filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .filter-bar .input { width: auto; flex: 1; min-width: 140px; }
+    select.input { cursor: pointer; }
+    /* Viewer canvas */
+    .mesh-viewer-container {
+      width: 100%;
+      height: 280px;
+      background: #0d1117;
+      border-radius: var(--radius-el);
+      overflow: hidden;
+      position: relative;
+    }
+    .mesh-viewer-container canvas { display: block; }
+    .viewer-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #aaa;
+      font-size: 13px;
+      pointer-events: none;
+    }
+    /* Map */
+    #map-container { width: 100%; height: 200px; border-radius: var(--radius-el); overflow: hidden; }
+    /* Panel title */
+    .panel-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+    /* Chart container */
+    .chart-wrap { position: relative; }
+  </style>
 </head>
 <body>
-    <div id="app">
-        <!-- Header -->
-        <header>
-            <h1>3D Scan Processor</h1>
-            <p class="subtitle">Upload a Stray Scanner dataset to generate and view 3D meshes</p>
-        </header>
+  <div id="sidebar">
+    <div id="sidebar-logo">Lichen Scanner</div>
+    <nav id="sidebar-nav">
+      <a class="nav-link" data-view="upload" href="#upload">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Upload
+      </a>
+      <a class="nav-link" data-view="jobs" href="#jobs">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Jobs
+      </a>
+      <a class="nav-link" data-view="samples" href="#samples">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Samples
+      </a>
+    </nav>
+  </div>
+  <main id="main"></main>
 
-        <!-- Tab Navigation -->
-        <nav class="tab-nav">
-            <button id="tab-dashboard" class="tab-btn active" data-tab="dashboard">Dashboard</button>
-            <button id="tab-scan" class="tab-btn" data-tab="scan">Scan</button>
-            <button id="tab-samples" class="tab-btn" data-tab="samples">Samples</button>
-        </nav>
-
-        <!-- ========== DASHBOARD TAB ========== -->
-        <div id="tab-content-dashboard" class="tab-content">
-            <div id="dashboard-container"></div>
-        </div>
-
-        <!-- ========== SCAN TAB (contains upload/progress/viewer/error) ========== -->
-        <div id="tab-content-scan" class="tab-content hidden">
-
-        <!-- Quick PLY Loader -->
-        <section id="ply-loader-section" class="ply-loader-card">
-            <h3>Open PLY</h3>
-            <div class="ply-loader-mode">
-                <label>
-                    <input type="radio" name="ply-load-mode" value="sample" checked>
-                    By Sample
-                </label>
-                <label>
-                    <input type="radio" name="ply-load-mode" value="filename">
-                    By Filename
-                </label>
-            </div>
-
-            <div id="ply-mode-sample" class="ply-loader-fields">
-                <select id="ply-sample-select" class="input"></select>
-                <select id="ply-file-select" class="input"></select>
-                <button id="btn-open-ply-sample" class="btn">Open PLY</button>
-            </div>
-
-            <div id="ply-mode-filename" class="ply-loader-fields hidden">
-                <input id="ply-filename-input" class="input" type="text" placeholder="e.g. mesh.ply or scan_01.ply">
-                <button id="btn-open-ply-filename" class="btn">Find & Open</button>
-            </div>
-            <p id="ply-loader-hint" class="ply-loader-hint"></p>
-        </section>
-
-        <!-- Upload Section -->
-        <section id="upload-section">
-            <div id="drop-zone" class="drop-zone">
-                <div class="drop-zone-content">
-                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                        <polyline points="17 8 12 3 7 8"/>
-                        <line x1="12" y1="3" x2="12" y2="15"/>
-                    </svg>
-                    <p>Drag & drop your <strong>.zip</strong> dataset here</p>
-                    <p class="hint">or click to browse</p>
-                </div>
-                <input type="file" id="file-input" accept=".zip" hidden>
-            </div>
-        </section>
-
-        <!-- Progress Section -->
-        <section id="progress-section" class="hidden">
-            <div class="progress-card">
-                <h2 id="progress-step">Preparing...</h2>
-                <div class="progress-bar-container">
-                    <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
-                </div>
-                <p id="progress-pct" class="progress-pct">0%</p>
-                <p id="progress-message" class="progress-message">Waiting...</p>
-            </div>
-        </section>
-
-        <!-- Viewer Section -->
-        <section id="viewer-section" class="hidden">
-            <!-- Main toolbar -->
-            <div class="viewer-toolbar">
-                <button id="btn-mesh" class="btn active">Mesh</button>
-                <button id="btn-pointcloud" class="btn">Point Cloud</button>
-                <div class="toolbar-sep"></div>
-                <button id="btn-low-quality" class="btn">Low Quality</button>
-                <button id="btn-edit" class="btn">Edit Mode</button>
-                <button id="btn-reset" class="btn btn-secondary">Reset View</button>
-            </div>
-
-            <!-- Edit toolbar (shown in edit mode) -->
-            <div id="edit-toolbar" class="viewer-toolbar edit-toolbar hidden">
-                <span id="edit-hint" class="edit-hint">Drag to select regions</span>
-                <span id="selection-count" class="selection-info">0 selected</span>
-                <button id="btn-delete" class="btn btn-danger" disabled>Delete Selected</button>
-                <button id="btn-clear-sel" class="btn" disabled>Clear</button>
-                <div class="toolbar-sep"></div>
-                <button id="btn-save-edit" class="btn btn-primary">Save Changes</button>
-                <button id="btn-reset-original" class="btn">Reset Original</button>
-                <button id="btn-refine" class="btn btn-primary">Refine (RGB)</button>
-                <button id="btn-exit-edit" class="btn btn-secondary">Exit Edit</button>
-            </div>
-
-            <div id="viewer-container"></div>
-            <p class="viewer-hint">Left-click drag: <span id="hint-action">rotate</span> | Right-click drag: pan | Scroll: zoom</p>
-        </section>
-
-        <!-- Error Section -->
-        <section id="error-section" class="hidden">
-            <div class="error-card">
-                <h2>Error</h2>
-                <p id="error-message"></p>
-                <button id="btn-retry" class="btn">Try Again</button>
-            </div>
-        </section>
-
-        </div><!-- end tab-content-scan -->
-
-        <!-- ========== SAMPLES TAB ========== -->
-        <div id="tab-content-samples" class="tab-content hidden">
-
-            <!-- Save sample form (shown after processing) -->
-            <div id="save-sample-bar" class="save-sample-bar hidden">
-                <input type="text" id="sample-name-input" class="input" placeholder="Enter sample name...">
-                <button id="btn-save-sample" class="btn btn-primary">Save as Sample</button>
-            </div>
-
-            <!-- Samples sort controls -->
-            <div id="samples-sort-bar" class="samples-sort-bar">
-                <span class="samples-sort-label">Sort by</span>
-                <button class="btn samples-sort-key active" data-sort-key="name">Name</button>
-                <button class="btn samples-sort-key" data-sort-key="status">Status</button>
-                <button class="btn samples-sort-key" data-sort-key="files">File</button>
-                <button class="btn samples-sort-key" data-sort-key="created">Created</button>
-                <button id="samples-sort-order" class="btn samples-sort-order" title="Toggle sort order">↑</button>
-            </div>
-
-            <!-- Sample list -->
-            <div id="samples-list" class="samples-list">
-                <p class="empty-hint">No samples saved yet. Process a scan and save it here.</p>
-            </div>
-        </div><!-- end tab-content-samples -->
-
-    </div>
-
-    <!-- Three.js from CDN -->
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
-        }
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
     }
-    </script>
-    <script type="module" src="/app.js"></script>
+  }
+  </script>
+  <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -75,10 +75,13 @@ async def _run_script(
     )
 
     total_frames = 0
+    output_lines: list[str] = []
     async for raw_line in proc.stdout:
         line = raw_line.decode("utf-8", errors="replace").strip()
         if not line:
             continue
+
+        output_lines.append(line)
 
         # Try to get total frames count
         m = re.search(r"Found (\d+) depth frames", line)
@@ -96,10 +99,11 @@ async def _run_script(
     await proc.wait()
 
     if proc.returncode != 0:
+        tail = "\n".join(output_lines[-15:]) if output_lines else "(no output captured)"
         await update_job(
             job_id,
             status=JobStatus.ERROR,
-            error=f"{step_name} failed (exit code {proc.returncode})",
+            error=f"{step_name} failed (exit code {proc.returncode}):\n{tail}",
         )
         return False
 

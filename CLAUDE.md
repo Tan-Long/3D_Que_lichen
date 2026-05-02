@@ -1,92 +1,276 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
+
+---
 
 ## Project Overview
 
-End-to-end pipeline for processing 3D tree bark scans (Stray Scanner) to detect and quantify lichen (địa y) on 92 cinnamon trees (*Cinnamomum cassia*, quế). Input: iPhone LiDAR scan data. Output: colored meshes and lichen area estimates classified by type (white/green) and slope side (upslope/downslope), reported in cm² and %.
+End-to-end pipeline for detecting and quantifying lichen (*địa y*) on cinnamon tree trunks (*Cinnamomum cassia*, quế) using iPhone LiDAR scans. Input: raw Stray Scanner data (RGB video, depth maps, IMU, odometry, GPS metadata). Output: colored 3D mesh with lichen labeled by type (white/green) and spatial orientation (upslope/downslope), with coverage statistics in cm² and %.
+
+**Institution:** VinUniversity, Hanoi  
+**Scale:** 500–1000 trees across 2–3 field sites  
+**Current accuracy:** ~70% on clean samples (HSV adaptive thresholding)
 
 ---
 
-## The analysis pipeline begins with field data collection using a LiDAR-equipped mobile device, capturing synchronized RGB video, depth maps, camera odometry, and IMU data around the tree. To reconstruct the trunk geometry, the system applies spatial filtering to isolate the target tree from background noise, followed by TSDF volumetric fusion to generate an initial 3D mesh.
+## Repository Structure
 
-This base model is then optimized: high-resolution RGB textures are projected onto the vertices, non-trunk artifacts are trimmed, and the surface is refined using volume-preserving Taubin smoothing. Finally, the mesh is capped at both ends and accurately aligned to global gravity using the IMU data.
-
-For lichen detection, the algorithm evaluates local contrast and color saturation in the HSV space directly on the raw point cloud. It employs adaptive thresholds based on natural bark brightness to accurately isolate lichen colonies, effectively filtering out green vegetation. These classification labels are then mapped onto the finalized mesh. By calculating the physical area of each mesh triangle and determining the trunk's primary axis via Principal Component Analysis (PCA), the system quantifies the total coverage. To classify the spatial orientation, the global gravity vector is projected onto a plane perpendicular to the trunk axis to establish the "upslope" direction. By evaluating each mesh face's centroid against this directional vector, the system precisely categorizes and reports the lichen distribution across the upslope and downslope sides of the tree.
+```
+3D_Que_lichen/
+├── 01_clean_pointcloud.py       # Filter trunk from background noise
+├── 01_extract_rgb_frames.py     # Extract JPEG frames from rgb.mp4 via ffmpeg
+├── 02_mesh_tsdf.py              # TSDF volumetric fusion → trunk_mesh_tsdf.ply
+├── 02_mesh.py                   # Poisson surface reconstruction (alternative)
+├── 02_pointcloud_and_mesh.py    # Server-friendly combined stage
+├── 03_recolor_mesh.py           # Project RGB texture onto mesh vertices
+├── 04_trim_mesh.py              # Remove non-trunk artifacts (reads gravity from location.csv)
+├── 04_auto_clean.py             # Automated trim helper
+├── 04b_finalize_mesh.py         # Taubin smoothing + end caps using IMU gravity
+├── 05_detect_lichen.py          # HSV adaptive detection → lichen_stats.json
+├── 05_trunk_isolation.py        # Trunk-only point cloud extraction
+├── 06_slope_analysis.py         # Slope/aspect from IMU + odometry → slope_info.json
+├── 07_solar_exposure.py         # Solar exposure from GPS + pysolar → solar_exposure.json
+├── requirements_pipeline.txt    # Pipeline dependencies (open3d, scipy, pysolar, etc.)
+├── Dockerfile                   # Multi-stage build for Railway deployment
+├── railway.toml                 # Railway.app deployment config
+└── 3d_scan/                     # FastAPI web application (separate .git)
+    ├── app/
+    │   ├── main.py              # FastAPI entry point + /api/health
+    │   ├── config.py            # SCAN_DATA_DIR, TEAM_MEMBERS, TSDF_VOXEL_SIZE env vars
+    │   ├── services/
+    │   │   ├── pipeline.py      # Orchestrates all 10 pipeline stages as subprocesses
+    │   │   ├── job_manager.py   # Async job queue with WebSocket progress push
+    │   │   ├── database.py      # SQLite via aiosqlite (labels: bark/white_lichen/green_lichen/artifact)
+    │   │   └── sample_store.py  # Sample CRUD
+    │   └── routers/
+    │       ├── upload.py        # POST /api/upload — accepts ZIP
+    │       ├── jobs.py          # GET /api/jobs, WebSocket /ws/jobs/{id}
+    │       ├── samples.py       # CRUD + /stats /slope /solar /location /wind endpoints
+    │       ├── viewer.py        # PLY viewer
+    │       ├── refine.py        # Re-run TSDF with uploaded cleaned PLY
+    │       └── import_router.py # Bulk import from SCAN_DATA_DIR
+    └── requirements.txt         # Server-only deps (fastapi, uvicorn, aiosqlite, httpx)
+```
 
 ---
 
-### Web Application (`3d_scan/app/`)
+## Pipeline — Stage by Stage
 
-FastAPI + vanilla JS frontend. Key modules:
+All scripts support `--scan NAME`, `--all`, `--skip-existing` flags.
 
-- `app/main.py` — entry point
-- `app/config.py` — paths and settings; override `SCAN_DATA_DIR` env var to point to raw data; `TEAM_MEMBERS` env var (comma-separated) for identity
-- `app/services/pipeline.py` — runs pipeline scripts as subprocesses using `venv311` Python (not `.venv`); parses progress from `(N/total)` stdout pattern
-- `app/services/job_manager.py` — async job queue
-- `app/services/database.py` — SQLite via aiosqlite
-- `app/routers/` — upload, import, jobs, refine, samples, viewer endpoints
-- `app/static/` — HTML/JS frontend (no framework)
+| Stage | Script | Input | Output | Key notes |
+|-------|--------|-------|--------|-----------|
+| 0 | `01_extract_rgb_frames.py` | `rgb.mp4`, `depth/` | `rgb/*.jpg` | ffmpeg; frame count = depth PNG count |
+| 1 | `01_clean_pointcloud.py` | `output/pointcloud.ply` | `output/trunk_pointcloud.ply` | Distance filter 0.30m from camera trajectory |
+| 2 | `02_mesh_tsdf.py` | `depth/`, `rgb/`, `camera_matrix.csv`, `odometry.csv`, `confidence/` | `output/trunk_mesh_tsdf.ply` | voxel=0.005m local / 0.008m server; sdf_trunc=0.05m |
+| 3 | `03_recolor_mesh.py` | `trunk_mesh_tsdf.ply`, `trunk_pointcloud.ply` | `trunk_mesh_recolored.ply` | KDTree color transfer |
+| 4 | `04_trim_mesh.py` | `trunk_mesh_recolored.ply` | `trunk_mesh_trimmed.ply` | **Reads gravity from `location.csv`** (gravity_x/y/z); fallback [0,-1,0] |
+| 5 | `04b_finalize_mesh.py` | `trunk_mesh_trimmed.ply`, `imu.csv` | `trunk_mesh_final.ply` | Taubin smoothing + IMU gravity caps |
+| 6 | `05_detect_lichen.py` | `trunk_mesh_final.ply`, `trunk_pointcloud.ply` | `trunk_mesh_detected.ply`, `lichen_stats.json` | **Reads gravity from `location.csv`**; adaptive HSV on PCD, transfer to mesh |
+| 7 | `06_slope_analysis.py` | `trunk_pointcloud.ply`, `imu.csv`, `odometry.csv` | `slope_info.json` | IMU gravity rotated to world frame via mean quaternion |
+| 8 | `07_solar_exposure.py` | `location.csv`, `output/slope_info.json` | `solar_exposure.json` | pysolar monthly solar budget; fallback approximation |
 
-**Note:** The web app's `pipeline.py` calls `venv311/Scripts/python.exe` — it does NOT use the main `.venv`.
+---
+
+## Input Data Format (ZIP upload)
+
+```
+<scan_name>.zip
+└── <scan_name>/
+    ├── camera_matrix.csv        # 3×3, comma-separated, calibrated for 1920×1440
+    ├── odometry.csv             # timestamp, frame, x, y, z, qx, qy, qz, qw
+    ├── imu.csv                  # timestamp, a_x, a_y, a_z (m/s²), [gyro cols]
+    ├── rgb.mp4                  # H.264, 1920×1440 @ ~30fps
+    ├── depth/                   # 16-bit PNG, uint16, values in mm
+    │   ├── 000000.png
+    │   └── ...
+    ├── confidence/              # 8-bit PNG, 0=low 1=med 2=high (optional)
+    │   └── ...
+    │
+    # --- Added by patched Stray Scanner app ---
+    ├── location.csv             # Per-ARFrame GPS + IMU metadata (see schema below)
+    ├── location.json            # Same data in JSON format
+    ├── tree_gps_anchor.json     # GPS fix at session start (world coordinate origin)
+    ├── frame_transforms.csv     # Full 4×4 camera transform per frame
+    └── point_cloud_raw.ply      # Sparse ARKit feature points (not depth-derived)
+```
+
+### location.csv schema
+
+```
+timestamp_iso, timestamp_unix, latitude, longitude, altitude_asl_m,
+gps_accuracy_m, heading_degrees, heading_cardinal, place_name, locality,
+cam_yaw, cam_pitch, cam_roll,
+slope_degrees, gravity_x, gravity_y, gravity_z
+```
+
+- `gravity_x/y/z` — CMMotionManager device-frame gravity (used by stages 4 and 6)
+- `heading_degrees` — CLHeading.trueHeading (not magnetic)
+- `timestamp_unix` — ARFrame.timestamp (not wall-clock)
+
+### tree_gps_anchor.json schema
+
+```json
+{
+  "scan_start_iso": "2026-04-16T09:06:33Z",
+  "anchor_lat": 20.988605,
+  "anchor_lon": 105.945381,
+  "anchor_alt": 13.1,
+  "anchor_accuracy_m": 10.3
+}
+```
+
+---
+
+## Key Implementation Details
+
+### Gravity vector (critical)
+
+- `04_trim_mesh.py` and `05_detect_lichen.py` both call `estimate_gravity(dataset_path)`.
+- The function reads `location.csv`, takes the **median** of `gravity_x/y/z` across all frames, normalizes, and returns gravity-down (trim) or gravity-up (detect).
+- **Fallback:** if `location.csv` is missing → `[0, -1, 0]` (trim) / `[0, 1, 0]` (detect).
+- `06_slope_analysis.py` reads `imu.csv` directly and rotates to world frame using `odometry.csv` quaternions — this is the more accurate slope calculation.
+
+### TSDF parameters
+
+- Library: `open3d.pipelines.integration.ScalableTSDFVolume`
+- `voxel_size`: 0.005m local, 0.008m server (`TSDF_VOXEL_SIZE` env var)
+- `sdf_trunc`: 0.05m (hardcoded)
+- Depth: uint16 PNG mm → float32 meters; `depth_scale=1.0` to Open3D
+- `max_depth`: 2.0m
+- Confidence filter: pixels with conf < 1 zeroed
+
+### HSV lichen detection (adaptive)
+
+Bark type determined by `bark_p20 = np.percentile(V, 20)`:
+
+| Bark type | Condition | abs_v threshold | abs_s |
+|-----------|-----------|-----------------|-------|
+| Dark | bark_p20 < 0.32 | max(0.55, bark_p20 + 1.8×std_V) | 0.28 |
+| Medium | 0.32–0.45 | max(0.63, bark_p20 + 2.1×std_V) | 0.24 |
+| Light | ≥ 0.45 | max(0.70, bark_p20 + 2.5×std_V) | 0.20 |
+
+Vegetation exclusion: H ∈ [65°, 150°] AND S > 0.25
+
+---
+
+## Web Server (3d_scan/app/)
+
+### Running locally
+
+```bash
+cd 3d_scan
+./venv311/bin/python -m uvicorn app.main:app --reload --port 8000
+```
+
+**Important:** The server uses `venv311` (not `.venv`). The `pipeline.py` subprocess calls use `venv311/bin/python` explicitly.
+
+### Environment variables
+
+```bash
+SCAN_DATA_DIR=/path/to/raw/scans   # For bulk import
+TEAM_MEMBERS=alice,bob,charlie      # Comma-separated
+TSDF_VOXEL_SIZE=0.008               # 0.008 for server (RAM), 0.005 for local (quality)
+```
+
+### Pipeline stages (server)
+
+`pipeline.py:run_pipeline()` runs 10 stages in sequence:
+1. Extract ZIP (0→5%)
+2. Extract RGB frames (5→10%)
+3. Build quick mesh — `02_pointcloud_and_mesh.py` (10→50%)
+4. TSDF fusion — `02_mesh_tsdf.py` (50→75%) — non-fatal if fails
+5. Clean pointcloud (75→78%)
+6. Recolor mesh (78→82%)
+7. Trim mesh (82→85%)
+8. Finalize mesh (85→88%)
+9. Detect lichen (88→93%)
+10. Slope analysis (93→96%)
+11. Solar exposure (96→99%)
+
+Progress parsed from `(N/total)` stdout pattern. WebSocket pushes to client.
+
+### API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/upload` | Accept ZIP ≤500MB, launch pipeline |
+| GET | `/api/jobs` | List all jobs |
+| GET | `/api/jobs/{id}` | Job status + progress |
+| WS | `/ws/jobs/{id}` | Real-time progress |
+| POST | `/api/refine` | Re-run TSDF with uploaded cleaned PLY |
+| GET | `/api/samples/{id}/stats` | `lichen_stats.json` |
+| GET | `/api/samples/{id}/slope` | `slope_info.json` |
+| GET | `/api/samples/{id}/solar` | `solar_exposure.json` |
+| GET | `/api/samples/{id}/location` | `tree_gps_anchor.json` |
+| GET | `/api/samples/{id}/wind` | Open-Meteo wind data (async fetch) |
+| GET | `/api/health` | `{"status":"ok"}` |
+
+### Dashboard panels (frontend)
+
+1. 3D mesh viewer — `trunk_mesh_detected.ply` via Three.js
+2. Lichen stats table — upslope/downslope cm² and %
+3. Upslope/downslope bar chart — Chart.js
+4. Solar exposure monthly chart — Chart.js (12-month bar)
+5. Wind rose — Chart.js polar (from Open-Meteo ERA5, 9km)
+6. GPS map — Leaflet + OpenStreetMap
+7. Slope info panel — terrain_slope_deg, trunk axis direction
+
+---
+
+## Deployment (Railway.app)
+
+```bash
+git push origin main   # Railway auto-deploys on push
+```
+
+- Builder: Dockerfile
+- Health check: `GET /api/health`
+- RAM requirement: min 8GB (Hobby plan) for TSDF at 8mm voxel
+- System deps in Docker: `libgl1-mesa-glx`, `libgomp1`, `ffmpeg`
+
+### Local Docker test
+
+```bash
+docker build -t lichen-server .
+docker run -p 8000:8000 -e TSDF_VOXEL_SIZE=0.008 lichen-server
+```
+
+---
+
+## Output Files
+
+All outputs written to `<dataset_path>/output/`:
+
+| File | Description |
+|------|-------------|
+| `trunk_mesh_detected.ply` | Colored mesh: white=lichen, green=green lichen, gray=bark |
+| `lichen_stats.json` | Coverage by type and slope side (cm², %) |
+| `slope_info.json` | gravity_world, trunk_axis, slope_deg, upslope/downslope point counts |
+| `solar_exposure.json` | sun_facing_fraction, monthly_facing[12], peak_solar_month |
+| `trunk_pointcloud.ply` | Cleaned trunk point cloud |
+| `trunk_mesh_final.ply` | Finalized mesh before lichen labeling |
+
+---
+
+## Common Issues
+
+**ffmpeg not found:** `sudo apt install ffmpeg` (server) or `brew install ffmpeg` (Mac)
+
+**open3d TSDF OOM:** Increase `TSDF_VOXEL_SIZE` (0.008→0.010) or reduce `max_depth` (2.0→1.5)
+
+**DBH = null:** Fewer than 20 points at z=1.2–1.4m — scan too sparse at breast height; re-scan
+
+**Gravity fallback used:** `location.csv` missing or empty — means patched Stray Scanner app not installed; gravity defaults to hardcoded axis
+
+**Wind data unavailable:** Open-Meteo API unreachable from Railway — check network egress settings
 
 ---
 
 ## Notes
 
-- Comments and variable names are primarily in Vietnamese; code structure follows standard Python conventions.
-- Scripts support `--all`, `--skip-existing`, and `--scan NAME` flags consistently.
-- CloudCompare (`tools/CloudCompare_v2.13.2_setup_x64.exe`) is optional for manual mesh inspection only.
-- `3d_scan/` has its own `.git` repo tracked separately from the main project directory.
-
-Method 1 
-
-The analysis pipeline begins with field data collection using a LiDAR-equipped mobile device (iPhone 12+ Pro/Pro Max). The integration of consumer-grade LiDAR in these devices has been validated as a reliable and cost-effective tool for capturing high-resolution 3D point clouds in forest inventories (Gollob et al., 2021) and broader geoscientific applications (Luetzenburg et al., 2021). Synchronized Red, Green, Blue (RGB) video, depth maps, camera odometry, and Inertial Measurement Unit (IMU) data were captured using the Stray Scanner application (Stray Robots, 2021), a tool which has been successfully utilized for extracting high-fidelity iPhone LiDAR data in recent spatial studies (Tondo et al., 2023). To reconstruct the trunk geometry, the system applies spatial filtering to isolate the target tree from background noise, followed by Truncated Signed Distance Function (TSDF) volumetric fusion (Curless & Levoy, 1996) to generate an initial 3D mesh.
-
-This base model is then optimized: high-resolution RGB textures are projected onto the vertices, non-trunk artifacts are trimmed, and the surface is refined using volume-preserving Taubin smoothing (Taubin, 1995). Finally, the mesh is capped at both ends using the gravity direction estimated from IMU accelerometer data.
-
-For lichen detection, the algorithm evaluates local contrast and color saturation in the Hue, Saturation, Value (HSV) space directly on the raw point cloud, a robust approach for color-based segmentation under varying outdoor lighting (Cheng et al., 2001). It employs adaptive thresholds based on natural bark brightness to accurately isolate lichen colonies, effectively filtering out green vegetation. These classification labels are then mapped onto the finalized mesh. By calculating the physical area of each mesh triangle and determining the trunk's primary axis via Principal Component Analysis (PCA) (Pfeifer et al., 2004), the system quantifies the total coverage. To classify the spatial orientation, the empirical global gravity vector (hardcoded to the world Y-axis) is projected onto a plane perpendicular to the trunk axis to establish the "upslope" direction. By evaluating each mesh face's centroid against this directional vector, the system precisely categorizes and reports the lichen distribution across the upslope and downslope sides of the tree.
-
-References
-
-Cheng, H. D., Jiang, X. H., Sun, Y., & Wang, J. (2001). Color image segmentation: advances and prospects. Pattern Recognition, 34(12), 2259-2281.
-
-Curless, B., & Levoy, M. (1996). A volumetric method for building complex models from range images. In Proceedings of the 23rd annual conference on Computer graphics and interactive techniques (pp. 303-312).
-
-Gollob, C., Ritter, T., Kraßnitzer, R., Tockner, A., & Nothdurft, A. (2021). Measurement of forest inventory parameters with Apple iPad Pro and integrated LiDAR technology. Remote Sensing, 13(16), 3129.
-
-Luetzenburg, G., Kroon, A., & Bjørk, A. A. (2021). Evaluation of the Apple iPhone 12 Pro LiDAR for an application in geosciences. Scientific Reports, 11(1), 22221.
-
-Pfeifer, N., Gorte, B., & Winterhalder, D. (2004). Automatic reconstruction of single trees from terrestrial laser scanner data. In Proceedings of the ISPRS Congress Istanbul (Vol. XXXV, pp. 114-119).
-
-Stray Robots. (2021). Stray Scanner (Version 1.0) [Mobile application software]. Retrieved from [https://github.com/strayrobots/scanner](https://github.com/strayrobots/scanner)
-
-Taubin, G. (1995). A signal processing approach to fair surface design. In Proceedings of the 22nd annual conference on Computer graphics and interactive techniques (pp. 351-358).
-
-Tondo, G. R., Riley, C., & Morgenthal, G. (2023). Characterization of the iPhone LiDAR-Based Sensing System for Vibration Measurement and Modal Analysis. Sensors, 23(18), 7832.
-
-Method 2
-
-The analysis pipeline begins with in situ data acquisition using a LiDAR-enabled mobile device, specifically an iPhone 12 Pro, operated via the Stray Scanner application. This setup enables the synchronized capture of Red – Green – Blue (RGB) imagery, depth maps, camera odometry, and Inertial Measurement Unit (IMU) measurements, facilitating comprehensive spatial sensing around the target tree. Such multimodal acquisition is consistent with established visual–inertial reconstruction frameworks (Leutenegger et al., 2015; Qin et al., 2018). To reconstruct trunk geometry, the collected data undergo spatial filtering to isolate the target structure from background noise, followed by volumetric integration using the Truncated Signed Distance Function (TSDF) representation. This approach enables robust surface reconstruction from range data and produces a consistent 3D mesh (Curless & Levoy, 1996; Newcombe et al., 2011). The resulting base mesh is subsequently refined through several post-processing steps. High-resolution RGB textures are projected onto the mesh vertices to enhance visual fidelity, following established large-scale texturing techniques (Waechter et al., 2014).
-
-Non-trunk artifacts are removed through geometric filtering, and the surface is smoothed using volume-preserving Taubin filtering, which effectively reduces noise while preserving geometric features (Taubin, 1995). The mesh is then capped at both ends using the gravity direction estimated from IMU accelerometer data, ensuring physically consistent alignment (Madgwick, 2010).
-
-For lichen detection, the method operates directly on the raw point cloud by analyzing local contrast and color saturation in the Hue–Saturation–Value (HSV) color space, a widely adopted representation for color-based segmentation (Smith, 1978). Adaptive thresholding based on bark brightness is applied to isolate lichen colonies while minimizing confusion with surrounding vegetation. The resulting classification labels are then mapped onto the reconstructed mesh. Quantification of lichen coverage is performed by computing the surface area of each triangular mesh element and aggregating contributions from classified regions. The principal axis of the trunk is estimated using Principal Component Analysis (PCA), a standard technique for geometric orientation analysis (Jolliffe, 2002). To determine spatial orientation, the global gravity vector is projected onto a plane orthogonal to the trunk axis to define the upslope direction. By evaluating each mesh face centroid relative to this directional vector, the system systematically categorizes and quantifies lichen distribution across upslope and downslope regions of the tree.
-
-Curless, B., & Levoy, M. (1996). A volumetric method for building complex models from range images. Proceedings of the 23rd Annual Conference on Computer Graphics and Interactive Techniques (SIGGRAPH), 303–312. [https://doi.org/10.1145/237170.237269](https://doi.org/10.1145/237170.237269)
-
-Jolliffe, I. T. (2002). Principal component analysis (2nd ed.). Springer. [https://doi.org/10.1007/b98835](https://doi.org/10.1007/b98835)
-
-Leutenegger, S., Lynen, S., Bosse, M., Siegwart, R., & Furgale, P. (2015). Keyframe-based visual–inertial odometry using nonlinear optimization. The International Journal of Robotics Research, 34(3), 314–334.
-
-Madgwick, S. O. H. (2010). An efficient orientation filter for inertial and inertial/magnetic sensor arrays. University of Bristol.
-
-Newcombe, R. A., Izadi, S., Hilliges, O., Molyneaux, D., Kim, D., Davison, A. J., Kohli, P., Shotton, J., Hodges, S., & Fitzgibbon, A. (2011). KinectFusion: Real-time dense surface mapping and tracking. Proceedings of the IEEE International Symposium on Mixed and Augmented Reality, 127–136. [https://doi.org/10.1109/ISMAR.2011.6092378](https://doi.org/10.1109/ISMAR.2011.6092378)
-
-Qin, T., Li, P., & Shen, S. (2018). VINS-Mono: A robust and versatile monocular visual–inertial state estimator. IEEE Transactions on Robotics, 34(4), 1004–1020. [https://doi.org/10.1109/TRO.2018.2853729](https://doi.org/10.1109/TRO.2018.2853729)
-
-Smith, A. R. (1978). Color gamut transform pairs. Proceedings of the 5th Annual Conference on Computer Graphics and Interactive Techniques (SIGGRAPH), 12–19. [https://doi.org/10.1145/800248.807361](https://doi.org/10.1145/800248.807361)
-
-Taubin, G. (1995). A signal processing approach to fair surface design. Proceedings of the 22nd Annual Conference on Computer Graphics and Interactive Techniques (SIGGRAPH), 351–358. [https://doi.org/10.1145/218380.218473](https://doi.org/10.1145/218380.218473)
-
-Waechter, M., Moehrle, N., & Goesele, M. (2014). Let there be color! Large-scale texturing of 3D reconstructions. European Conference on Computer Vision (ECCV), 836–850. [https://doi.org/10.1007/978-3-319-10602-1_54](https://doi.org/10.1007/978-3-319-10602-1_54)
+- Code comments and variable names are primarily in Vietnamese
+- `3d_scan/` has its own `.git` — treat as separate repo when committing
+- CloudCompare (`tools/`) is optional for manual inspection only
+- `point_cloud_raw.ply` (ARKit sparse feature points) is NOT used for TSDF — only `depth/*.png` are used
