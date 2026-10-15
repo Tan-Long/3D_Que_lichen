@@ -33,6 +33,16 @@ TREE_COVERAGE_PATH = ROOT / "artifacts/surface_cluster_pilot/tree_coverage_revie
 TREE_COVERAGE_DECISIONS = {"none", "sparse", "patchy", "high", "full", "uncertain"}
 MATERIAL_REVIEW_PATH = ROOT / "artifacts/surface_cluster_pilot/material_reviews.json"
 MATERIAL_BANDS = {"hard_bark", "review_band", "hard_lichen"}
+MATERIAL_ORIGINALS = {
+    "hard_bark": ("bark", "Vỏ chắc"),
+    "review_band": ("uncertain", "Cần xem"),
+    "hard_lichen": ("lichen", "Địa y chắc"),
+}
+MATERIAL_CLASS_NAMES = {
+    "lichen": "Địa y", "bark": "Vỏ", "vegetation": "Cây bụi/nền",
+    "mixed_lichen": "Lẫn · thiên địa y", "mixed_bark": "Lẫn · thiên vỏ",
+    "mixed": "Lẫn cân bằng", "uncertain": "Không chắc",
+}
 CLUSTER_SCANS = {
     "new-1-tra-van-tra-my-video-20260630-113436-6541ffc0": "1-tra-van-tra-my__video_20260630_113436",
     "new-cay-0002-1905-xh-2-981697e8": "cay_0002_1905_XH-2",
@@ -146,18 +156,28 @@ def record_tree_coverage_review(path: Path, scan_uid: str, decision: str,
     return review
 
 
-def record_material_review(path: Path, scan_uid: str, band: str, decision: str,
-                           updated_at: str | None = None) -> dict:
+def record_material_review(path: Path, scan_uid: str, band: str, action: str,
+                           decision: str, updated_at: str | None = None) -> dict:
     if scan_uid not in CLUSTER_SCANS:
         raise ValueError("scan_uid is not in the approved production set")
     if band not in MATERIAL_BANDS:
         raise ValueError("band must be hard_bark, review_band, or hard_lichen")
+    if action not in {"approved", "corrected"}:
+        raise ValueError("action must be approved or corrected")
     if decision not in CLUSTER_DECISIONS:
         raise ValueError("invalid material class decision")
+    original, original_name = MATERIAL_ORIGINALS[band]
+    if action == "approved" and decision != original:
+        raise ValueError("approved decision must keep the original class")
+    if action == "corrected" and decision == original:
+        raise ValueError("corrected decision must change the original class")
     timestamp = updated_at or datetime.now(timezone.utc).isoformat()
     data = read_reviews(path)
     review = {"scan_uid": scan_uid, "scan": CLUSTER_SCANS[scan_uid],
-              "band": band, "decision": decision, "updated_at": timestamp}
+              "band": band, "original_class": original,
+              "original_name": original_name, "action": action,
+              "decision": decision, "new_name": MATERIAL_CLASS_NAMES[decision],
+              "updated_at": timestamp}
     data["reviews"].setdefault(scan_uid, {})[band] = review
     data["updated_at"] = timestamp
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -284,7 +304,8 @@ class GalleryHandler(SimpleHTTPRequestHandler):
                 payload = json.loads(self.rfile.read(length))
                 review = record_material_review(
                     MATERIAL_REVIEW_PATH, payload.get("scan_uid"),
-                    payload.get("band"), payload.get("decision"))
+                    payload.get("band"), payload.get("action"),
+                    payload.get("decision"))
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 self.send_json(400, {"error": str(exc)})
                 return

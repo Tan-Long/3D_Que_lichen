@@ -39,6 +39,9 @@ class ReviewStoreTest(unittest.TestCase):
         self.assertIn("/api/material-reviews", html)
         self.assertIn('data-material-band=', html)
         self.assertIn("['review_band','Cần xem'", html)
+        self.assertIn('Tên gốc: ${name}', html)
+        self.assertIn('Duyệt · giữ ${originalName}', html)
+        self.assertIn('Sửa → ${label}', html)
         self.assertIn("variantParam==='dinov3full'", html)
         self.assertIn("/api/dinov3-k3-catalog", html)
         self.assertIn("Bao phủ địa y toàn thân", html)
@@ -94,17 +97,33 @@ class ReviewStoreTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "material.json"
             scan_uid = next(iter(CLUSTER_SCANS))
-            record_material_review(path, scan_uid, "review_band", "mixed_bark", "now")
+            record_material_review(
+                path, scan_uid, "review_band", "corrected", "mixed_bark", "now")
             saved = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(
-                saved["reviews"][scan_uid]["review_band"]["decision"], "mixed_bark")
+            review = saved["reviews"][scan_uid]["review_band"]
+            self.assertEqual(review["original_name"], "Cần xem")
+            self.assertEqual(review["action"], "corrected")
+            self.assertEqual(review["new_name"], "Lẫn · thiên vỏ")
 
     def test_rejects_unknown_material_band(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "band must be"):
                 record_material_review(
                     Path(directory) / "material.json", next(iter(CLUSTER_SCANS)),
-                    "whole_tree", "bark")
+                    "whole_tree", "corrected", "bark")
+
+    def test_material_approval_keeps_original_class(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            scan_uid = next(iter(CLUSTER_SCANS))
+            review = record_material_review(
+                Path(directory) / "material.json", scan_uid,
+                "hard_bark", "approved", "bark", "now")
+            self.assertEqual(review["original_name"], "Vỏ chắc")
+            self.assertEqual(review["new_name"], "Vỏ")
+            with self.assertRaisesRegex(ValueError, "must keep"):
+                record_material_review(
+                    Path(directory) / "material.json", scan_uid,
+                    "hard_bark", "approved", "lichen")
 
     def test_selects_review_group_from_query(self) -> None:
         self.assertEqual(review_group("/api/reviews"), "deferred")
