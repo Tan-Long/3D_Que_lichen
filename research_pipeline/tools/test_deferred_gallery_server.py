@@ -12,6 +12,7 @@ from serve_deferred_gallery import (
     dinov3_k3_catalog,
     merged_reviews,
     record_cluster_review,
+    record_material_review,
     record_review,
     record_tree_coverage_review,
     review_group,
@@ -36,6 +37,8 @@ class ReviewStoreTest(unittest.TestCase):
         self.assertIn("material_probability_mesh.ply", html)
         self.assertIn('id="material-review"', html)
         self.assertIn("/api/material-reviews", html)
+        self.assertIn('data-material-band=', html)
+        self.assertIn("['review_band','Cần xem'", html)
         self.assertIn("variantParam==='dinov3full'", html)
         self.assertIn("/api/dinov3-k3-catalog", html)
         self.assertIn("Bao phủ địa y toàn thân", html)
@@ -86,6 +89,22 @@ class ReviewStoreTest(unittest.TestCase):
     def test_material_review_store_is_separate(self) -> None:
         self.assertEqual(MATERIAL_REVIEW_PATH.name, "material_reviews.json")
         self.assertNotIn(MATERIAL_REVIEW_PATH, REVIEW_PATHS.values())
+
+    def test_persists_material_decision_by_band(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "material.json"
+            scan_uid = next(iter(CLUSTER_SCANS))
+            record_material_review(path, scan_uid, "review_band", "mixed_bark", "now")
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                saved["reviews"][scan_uid]["review_band"]["decision"], "mixed_bark")
+
+    def test_rejects_unknown_material_band(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "band must be"):
+                record_material_review(
+                    Path(directory) / "material.json", next(iter(CLUSTER_SCANS)),
+                    "whole_tree", "bark")
 
     def test_selects_review_group_from_query(self) -> None:
         self.assertEqual(review_group("/api/reviews"), "deferred")
