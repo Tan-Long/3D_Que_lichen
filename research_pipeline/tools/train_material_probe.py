@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import shutil
 import tempfile
@@ -17,6 +18,7 @@ from scipy.sparse.linalg import lsqr
 ROOT = Path(__file__).resolve().parents[1]
 PILOT_ROOT = ROOT / "artifacts/surface_cluster_pilot"
 REVIEWS_PATH = PILOT_ROOT / "cluster_reviews_dinov3_k3.json"
+PRODUCTION_PATH = ROOT / "manifests/production_baseline_v1_approved.csv"
 SOURCE_VARIANTS = ("dinov3_vitl16_k3", "dinov3_vitl16_k3_cached")
 OUTPUT_VARIANT = "material_probe_pure_v2"
 PURE_TARGETS = {
@@ -57,32 +59,50 @@ def source_dir_for(uid: str, root: Path = PILOT_ROOT) -> Path:
     raise FileNotFoundError(f"{uid}: no DINOv3-L K=3 triangle data found")
 
 
+def load_tree(uid: str, cluster_reviews: dict | None = None,
+              require_reviews: bool = False) -> TreeData:
+    source_dir = source_dir_for(uid)
+    with np.load(source_dir / "surface_cluster_triangle_data.npz") as data:
+        tree = TreeData(
+            uid=uid,
+            source_dir=source_dir,
+            labels=np.asarray(data["labels"], dtype=np.int16),
+            observations=np.asarray(data["observations"], dtype=np.uint16),
+            areas_m2=np.asarray(data["areas_m2"], dtype=np.float64),
+            projected=np.asarray(data["projected_features"], dtype=np.float32),
+            pca_mean=np.asarray(data["pca_mean"], dtype=np.float32),
+            pca_components=np.asarray(data["pca_components"], dtype=np.float32),
+            reviews={int(cluster): review["decision"]
+                     for cluster, review in (cluster_reviews or {}).items()},
+        )
+    if len(tree.observed_indices) != len(tree.projected):
+        raise ValueError(f"{uid}: projected features do not match observed triangles")
+    if require_reviews and set(tree.reviews) != set(range(3)):
+        raise ValueError(f"{uid}: all three K=3 clusters must be reviewed")
+    return tree
+
+
 def load_trees(reviews_path: Path = REVIEWS_PATH) -> list[TreeData]:
     review_data = json.loads(reviews_path.read_text(encoding="utf-8")).get("reviews", {})
-    trees = []
-    for uid, cluster_reviews in sorted(review_data.items()):
-        source_dir = source_dir_for(uid)
-        with np.load(source_dir / "surface_cluster_triangle_data.npz") as data:
-            tree = TreeData(
-                uid=uid,
-                source_dir=source_dir,
-                labels=np.asarray(data["labels"], dtype=np.int16),
-                observations=np.asarray(data["observations"], dtype=np.uint16),
-                areas_m2=np.asarray(data["areas_m2"], dtype=np.float64),
-                projected=np.asarray(data["projected_features"], dtype=np.float32),
-                pca_mean=np.asarray(data["pca_mean"], dtype=np.float32),
-                pca_components=np.asarray(data["pca_components"], dtype=np.float32),
-                reviews={int(cluster): review["decision"]
-                         for cluster, review in cluster_reviews.items()},
-            )
-        if len(tree.observed_indices) != len(tree.projected):
-            raise ValueError(f"{uid}: projected features do not match observed triangles")
-        if set(tree.reviews) != set(range(3)):
-            raise ValueError(f"{uid}: all three K=3 clusters must be reviewed")
-        trees.append(tree)
+    trees = [load_tree(uid, cluster_reviews, require_reviews=True)
+             for uid, cluster_reviews in sorted(review_data.items())]
     if len(trees) < 2:
         raise ValueError("at least two fully reviewed trees are required")
     return trees
+
+
+def production_uids(path: Path = PRODUCTION_PATH) -> list[str]:
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        return [row["scan_uid"] for row in csv.DictReader(handle)]
+
+
+def output_complete(uid: str, root: Path = PILOT_ROOT) -> bool:
+    output_dir = root / uid / OUTPUT_VARIANT
+    return all((output_dir / name).is_file() for name in (
+        "material_probability_mesh.ply",
+        "material_probabilities.npz",
+        "material_probe_metrics.json",
+    ))
 
 
 def training_rows(trees: list[TreeData], sample_per_cluster: int, seed: int,
@@ -251,9 +271,17 @@ def run(args: argparse.Namespace) -> dict:
     x, y, weights = training_rows(trees, args.sample_per_cluster, args.seed)
     coefficients = fit_probe(x, y, weights, args.ridge)
     outputs = []
-    for tree in trees:
+    reviewed = {tree.uid: tree for tree in trees}
+    output_uids = production_uids(args.production_manifest) if args.all_production else list(reviewed)
+    for uid in output_uids:
+        if args.resume and output_complete(uid):
+            metrics_path = PILOT_ROOT / uid / OUTPUT_VARIANT / "material_probe_metrics.json"
+            outputs.append(json.loads(metrics_path.read_text(encoding="utf-8")))
+            print(f"skipped existing {uid}", flush=True)
+            continue
+        tree = reviewed.get(uid) or load_tree(uid)
         outputs.append(write_tree_output(tree, predict_tree(tree, coefficients), cv))
-        print(f"wrote {tree.uid}", flush=True)
+        print(f"wrote {uid}", flush=True)
     model_dir = PILOT_ROOT / OUTPUT_VARIANT
     model_dir.mkdir(parents=True, exist_ok=True)
     temporary_model = model_dir / "material_probe_model.tmp.npz"
@@ -264,6 +292,7 @@ def run(args: argparse.Namespace) -> dict:
         "model": "DINOv3-L inverse-PCA feature + balanced pure-label ridge",
         "source_variants": list(SOURCE_VARIANTS),
         "trees": len(trees),
+        "output_trees": len(outputs),
         "supervised_trees": sum(
             any(decision in PURE_TARGETS for decision in tree.reviews.values())
             for tree in trees
@@ -286,10 +315,16 @@ def main() -> None:
     parser.add_argument("--sample-per-cluster", type=int, default=512)
     parser.add_argument("--ridge", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--all-production", action="store_true",
+                        help="Run inference for every approved production tree")
+    parser.add_argument("--production-manifest", type=Path, default=PRODUCTION_PATH)
+    parser.add_argument("--resume", action="store_true",
+                        help="Keep complete pure-v2 outputs and continue missing trees")
     args = parser.parse_args()
     result = run(args)
     print(json.dumps({
         "trees": result["trees"],
+        "output_trees": result["output_trees"],
         "training_rows": result["training_rows"],
         "cv_mae": result["cross_validation"]["mean_absolute_error"],
         "cv_directional_accuracy": result["cross_validation"]["directional_accuracy"],
