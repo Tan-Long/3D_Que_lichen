@@ -31,6 +31,7 @@ CLUSTER_DECISIONS = {
 }
 TREE_COVERAGE_PATH = ROOT / "artifacts/surface_cluster_pilot/tree_coverage_reviews.json"
 TREE_COVERAGE_DECISIONS = {"none", "sparse", "patchy", "high", "full", "uncertain"}
+MATERIAL_REVIEW_PATH = ROOT / "artifacts/surface_cluster_pilot/material_reviews.json"
 CLUSTER_SCANS = {
     "new-1-tra-van-tra-my-video-20260630-113436-6541ffc0": "1-tra-van-tra-my__video_20260630_113436",
     "new-cay-0002-1905-xh-2-981697e8": "cay_0002_1905_XH-2",
@@ -207,6 +208,9 @@ class GalleryHandler(SimpleHTTPRequestHandler):
         if request_path == "/api/tree-coverage-reviews":
             self.send_json(200, read_reviews(TREE_COVERAGE_PATH))
             return
+        if request_path == "/api/material-reviews":
+            self.send_json(200, read_reviews(MATERIAL_REVIEW_PATH))
+            return
         if request_path == "/api/dinov3-k3-catalog":
             self.send_json(200, dinov3_k3_catalog())
             return
@@ -245,6 +249,20 @@ class GalleryHandler(SimpleHTTPRequestHandler):
                 payload = json.loads(self.rfile.read(length))
                 review = record_tree_coverage_review(
                     TREE_COVERAGE_PATH, payload.get("scan_uid"), payload.get("decision"))
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                self.send_json(400, {"error": str(exc)})
+                return
+            self.send_json(200, {"review": review})
+            return
+        if self.path.split("?", 1)[0] == "/api/material-reviews":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length < 1 or length > 4096:
+                    raise ValueError("invalid request size")
+                payload = json.loads(self.rfile.read(length))
+                review = record_review(
+                    MATERIAL_REVIEW_PATH, CLUSTER_SCANS,
+                    payload.get("scan_uid"), payload.get("decision"))
             except (ValueError, TypeError, json.JSONDecodeError) as exc:
                 self.send_json(400, {"error": str(exc)})
                 return

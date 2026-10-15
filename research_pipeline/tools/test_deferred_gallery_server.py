@@ -5,6 +5,8 @@ from pathlib import Path
 
 from serve_deferred_gallery import (
     CLUSTER_SCANS,
+    MATERIAL_REVIEW_PATH,
+    REVIEW_PATHS,
     ROOT,
     cluster_review_path,
     dinov3_k3_catalog,
@@ -32,6 +34,8 @@ class ReviewStoreTest(unittest.TestCase):
         self.assertIn("key==='q'", html)
         self.assertIn("<kbd>Q</kbd> đổi lớp", html)
         self.assertIn("material_probability_mesh.ply", html)
+        self.assertIn('id="material-review"', html)
+        self.assertIn("/api/material-reviews", html)
         self.assertIn("variantParam==='dinov3full'", html)
         self.assertIn("/api/dinov3-k3-catalog", html)
         self.assertIn("Bao phủ địa y toàn thân", html)
@@ -78,6 +82,10 @@ class ReviewStoreTest(unittest.TestCase):
             path = Path(directory) / "reviews.json"
             review = record_review(path, {"scan-1": "Tree 1"}, "scan-1", "needs_review")
             self.assertEqual(review["decision"], "needs_review")
+
+    def test_material_review_store_is_separate(self) -> None:
+        self.assertEqual(MATERIAL_REVIEW_PATH.name, "material_reviews.json")
+        self.assertNotIn(MATERIAL_REVIEW_PATH, REVIEW_PATHS.values())
 
     def test_selects_review_group_from_query(self) -> None:
         self.assertEqual(review_group("/api/reviews"), "deferred")
