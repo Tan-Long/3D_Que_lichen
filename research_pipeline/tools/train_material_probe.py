@@ -17,13 +17,10 @@ from scipy.sparse.linalg import lsqr
 ROOT = Path(__file__).resolve().parents[1]
 PILOT_ROOT = ROOT / "artifacts/surface_cluster_pilot"
 REVIEWS_PATH = PILOT_ROOT / "cluster_reviews_dinov3_k3.json"
-SOURCE_VARIANT = "dinov3_vitl16_k3_cached"
-OUTPUT_VARIANT = "material_probe_soft_v1"
-SOFT_TARGETS = {
+SOURCE_VARIANTS = ("dinov3_vitl16_k3", "dinov3_vitl16_k3_cached")
+OUTPUT_VARIANT = "material_probe_pure_v2"
+PURE_TARGETS = {
     "bark": 0.0,
-    "mixed_bark": 0.25,
-    "mixed": 0.5,
-    "mixed_lichen": 0.75,
     "lichen": 1.0,
 }
 
@@ -52,11 +49,19 @@ def reconstruct_features(projected: np.ndarray, mean: np.ndarray,
     return np.divide(features, norms, out=np.zeros_like(features), where=norms > 0)
 
 
+def source_dir_for(uid: str, root: Path = PILOT_ROOT) -> Path:
+    for variant in SOURCE_VARIANTS:
+        source_dir = root / uid / variant
+        if (source_dir / "surface_cluster_triangle_data.npz").is_file():
+            return source_dir
+    raise FileNotFoundError(f"{uid}: no DINOv3-L K=3 triangle data found")
+
+
 def load_trees(reviews_path: Path = REVIEWS_PATH) -> list[TreeData]:
     review_data = json.loads(reviews_path.read_text(encoding="utf-8")).get("reviews", {})
     trees = []
     for uid, cluster_reviews in sorted(review_data.items()):
-        source_dir = PILOT_ROOT / uid / SOURCE_VARIANT
+        source_dir = source_dir_for(uid)
         with np.load(source_dir / "surface_cluster_triangle_data.npz") as data:
             tree = TreeData(
                 uid=uid,
@@ -87,9 +92,9 @@ def training_rows(trees: list[TreeData], sample_per_cluster: int, seed: int,
     for tree in trees:
         if tree.uid == excluded_uid:
             continue
-        eligible = [(cluster, SOFT_TARGETS[decision])
+        eligible = [(cluster, PURE_TARGETS[decision])
                     for cluster, decision in tree.reviews.items()
-                    if decision in SOFT_TARGETS]
+                    if decision in PURE_TARGETS]
         observed_labels = tree.labels[tree.observed_indices]
         for cluster, target in eligible:
             indices = np.flatnonzero(observed_labels == cluster)
@@ -139,11 +144,11 @@ def predict_tree(tree: TreeData, coefficients: np.ndarray,
 def cluster_evaluation(tree: TreeData, scores: np.ndarray) -> list[dict]:
     rows = []
     for cluster, decision in sorted(tree.reviews.items()):
-        if decision not in SOFT_TARGETS:
+        if decision not in PURE_TARGETS:
             continue
         mask = (tree.labels == cluster) & np.isfinite(scores)
         predicted = float(np.average(scores[mask], weights=tree.areas_m2[mask]))
-        target = SOFT_TARGETS[decision]
+        target = PURE_TARGETS[decision]
         rows.append({"scan_uid": tree.uid, "cluster": cluster, "decision": decision,
                      "target": target, "predicted": predicted,
                      "absolute_error": abs(predicted - target)})
@@ -184,8 +189,8 @@ def write_tree_output(tree: TreeData, scores: np.ndarray, cv: dict) -> dict:
     area = tree.areas_m2
     rows = {
         "scan_uid": tree.uid,
-        "method": "balanced_soft_ridge_on_inverse_PCA_DINOv3_L_features",
-        "source_variant": SOURCE_VARIANT,
+        "method": "balanced_pure_label_ridge_on_inverse_PCA_DINOv3_L_features",
+        "source_variant": tree.source_dir.name,
         "observed_triangles": int((tree.labels >= 0).sum()),
         "material_triangles": int(valid.sum()),
         "vegetation_triangles": int(vegetation.sum()),
@@ -225,6 +230,8 @@ def run(args: argparse.Namespace) -> dict:
     trees = load_trees(args.reviews)
     fold_rows = []
     for held_out in trees:
+        if not any(decision in PURE_TARGETS for decision in held_out.reviews.values()):
+            continue
         x, y, weights = training_rows(
             trees, args.sample_per_cluster, args.seed, excluded_uid=held_out.uid)
         coefficients = fit_probe(x, y, weights, args.ridge)
@@ -232,6 +239,7 @@ def run(args: argparse.Namespace) -> dict:
         print(f"validated {held_out.uid}", flush=True)
     cv = {
         "protocol": "leave_one_tree_out",
+        "evaluated_trees": len({row["scan_uid"] for row in fold_rows}),
         "clusters": len(fold_rows),
         "mean_absolute_error": float(np.mean([row["absolute_error"] for row in fold_rows])),
         "directional_accuracy": float(np.mean([
@@ -253,14 +261,18 @@ def run(args: argparse.Namespace) -> dict:
     temporary_model.replace(model_dir / "material_probe_model.npz")
     summary = {
         "status": "pilot_not_ground_truth",
-        "model": "DINOv3-L inverse-PCA feature + balanced soft ridge",
-        "source_variant": SOURCE_VARIANT,
+        "model": "DINOv3-L inverse-PCA feature + balanced pure-label ridge",
+        "source_variants": list(SOURCE_VARIANTS),
         "trees": len(trees),
+        "supervised_trees": sum(
+            any(decision in PURE_TARGETS for decision in tree.reviews.values())
+            for tree in trees
+        ),
         "training_rows": len(x),
         "sample_per_cluster": args.sample_per_cluster,
         "ridge": args.ridge,
-        "soft_targets": SOFT_TARGETS,
-        "excluded_label": "vegetation",
+        "targets": PURE_TARGETS,
+        "excluded_labels": ["mixed_bark", "mixed", "mixed_lichen", "vegetation", "uncertain"],
         "cross_validation": cv,
         "outputs": outputs,
     }

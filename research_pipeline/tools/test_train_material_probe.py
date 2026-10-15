@@ -5,21 +5,32 @@ import unittest
 import numpy as np
 
 from train_material_probe import (
-    SOFT_TARGETS,
+    PURE_TARGETS,
     fit_probe,
     probability_colors,
     reconstruct_features,
+    source_dir_for,
 )
 
 
 class MaterialProbeTest(unittest.TestCase):
-    def test_mixed_labels_are_ordered_soft_targets(self) -> None:
-        self.assertEqual(
-            [SOFT_TARGETS[name] for name in
-             ("bark", "mixed_bark", "mixed", "mixed_lichen", "lichen")],
-            [0.0, 0.25, 0.5, 0.75, 1.0],
-        )
-        self.assertNotIn("vegetation", SOFT_TARGETS)
+    def test_only_pure_labels_are_training_targets(self) -> None:
+        self.assertEqual(PURE_TARGETS, {"bark": 0.0, "lichen": 1.0})
+
+    def test_finds_direct_then_cached_k3_artifact(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cached = root / "tree" / "dinov3_vitl16_k3_cached"
+            cached.mkdir(parents=True)
+            (cached / "surface_cluster_triangle_data.npz").touch()
+            self.assertEqual(source_dir_for("tree", root), cached)
+            direct = root / "tree" / "dinov3_vitl16_k3"
+            direct.mkdir()
+            (direct / "surface_cluster_triangle_data.npz").touch()
+            self.assertEqual(source_dir_for("tree", root), direct)
 
     def test_inverse_pca_reconstruction_is_normalized(self) -> None:
         projected = np.asarray([[2.0, 0.0], [0.0, 3.0]], dtype=np.float32)
