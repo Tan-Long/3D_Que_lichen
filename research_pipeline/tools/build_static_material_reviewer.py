@@ -104,6 +104,8 @@ def build(output: Path, limit: int | None = None) -> dict:
         print(f"[{index}/{len(rows)}] {uid}", flush=True)
     shutil.copyfile(ROOT / "surface_cluster_gallery.html",
                     output / "surface_cluster_gallery.html")
+    shutil.copytree(ROOT / "vendor/three", output / "vendor/three",
+                    dirs_exist_ok=True)
     (output / "review_catalog.json").write_text(
         json.dumps({"samples": samples, "ready": len(samples), "total": len(rows)},
                    ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
