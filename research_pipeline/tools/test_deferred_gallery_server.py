@@ -1,7 +1,14 @@
 import json
+import gzip
+import struct
 import tempfile
 import unittest
 from pathlib import Path
+
+import numpy as np
+
+from build_static_material_reviewer import write_packed
+from import_static_material_reviews import import_reviews
 
 from serve_deferred_gallery import (
     CLUSTER_SCANS,
@@ -20,6 +27,34 @@ from serve_deferred_gallery import (
 
 
 class ReviewStoreTest(unittest.TestCase):
+    def test_static_mesh_pack_has_versioned_header(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mesh.qlm.gz"
+            write_packed(
+                path, np.asarray([[0, 0, 0], [1, 0, 0], [0, 1, 0]]),
+                np.asarray([[0, 1, 2]]), np.asarray([[1, 2, 3]]),
+                np.asarray([[4, 5, 6]]))
+            payload = gzip.decompress(path.read_bytes())
+            self.assertEqual(payload[:4], b"QLM2")
+            self.assertEqual(struct.unpack("<II", payload[4:12]), (3, 1))
+
+    def test_imports_static_review_export_atomically(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            uid = next(iter(CLUSTER_SCANS))
+            review = record_material_review(
+                root / "seed.json", uid, "review_band", "corrected", "mixed_bark", "now")
+            source = root / "export.json"
+            source.write_text(json.dumps({
+                "schema_version": 1, "reviewer": "Reviewer A", "reviews": {
+                    uid: {"review_band": review}}}), encoding="utf-8")
+            destination = root / "merged.json"
+            result = import_reviews(source, destination)
+            saved = json.loads(destination.read_text(encoding="utf-8"))
+            self.assertEqual(result["records"], 1)
+            self.assertEqual(saved["imports"][0]["reviewer"], "Reviewer A")
+            self.assertEqual(saved["reviews"][uid]["review_band"]["decision"], "mixed_bark")
+
     def test_model_comparison_viewer_lists_only_dinov3_backbones(self) -> None:
         html = (ROOT / "surface_cluster_gallery.html").read_text(encoding="utf-8")
         self.assertIn("dinov3compare", html)
@@ -42,6 +77,10 @@ class ReviewStoreTest(unittest.TestCase):
         self.assertIn('Tên gốc: ${name}', html)
         self.assertIn('Duyệt · giữ ${originalName}', html)
         self.assertIn('Sửa → ${label}', html)
+        self.assertIn("staticMode=params.has('static')", html)
+        self.assertIn("function exportReviews()", html)
+        self.assertIn("function validImportedReviews(data)", html)
+        self.assertIn("new DecompressionStream('gzip')", html)
         self.assertIn("variantParam==='dinov3full'", html)
         self.assertIn("/api/dinov3-k3-catalog", html)
         self.assertIn("Bao phủ địa y toàn thân", html)
