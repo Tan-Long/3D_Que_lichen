@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Observed-support · A/B mesh</title>
+  <script type="importmap">
+    {"imports":{"three":"/vendor/three/three.module.js","three/addons/loaders/PLYLoader.js":"/vendor/three/PLYLoader.js","three/addons/controls/OrbitControls.js":"/vendor/three/OrbitControls.js"}}
+  </script>
+  <style>
+    :root { color-scheme: dark; --canvas:#0b0e0d; --panel:#121715; --raised:#19201c; --line:#2a342e; --strong:#506057; --text:#eef4f0; --secondary:#b5c0b9; --muted:#7f8b84; --accent:#9ece8f; --baseline:#91a0aa; --boost:#9ece8f; }
+    * { box-sizing: border-box; }
+    html, body { height:100%; }
+    body { margin:0; overflow:hidden; color:var(--text); background:var(--canvas); font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    button { font:inherit; }
+    header { height:72px; display:flex; align-items:center; justify-content:space-between; gap:24px; padding:0 20px; border-bottom:1px solid var(--line); background:var(--panel); }
+    .eyebrow { color:var(--accent); font:650 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.09em; text-transform:uppercase; }
+    h1 { margin:4px 0 0; font-size:20px; line-height:1.1; }
+    .hint { color:var(--muted); text-align:right; }
+    main { height:calc(100% - 72px); display:grid; grid-template-columns:300px minmax(0,1fr); }
+    aside { min-height:0; display:flex; flex-direction:column; border-right:1px solid var(--line); background:var(--panel); }
+    .intro { padding:16px; color:var(--secondary); border-bottom:1px solid var(--line); }
+    .intro strong { color:var(--text); }
+    .sample-list { padding:8px; display:grid; gap:6px; }
+    .sample { min-height:52px; padding:10px 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--secondary); background:transparent; border:1px solid transparent; border-radius:8px; text-align:left; cursor:pointer; }
+    .sample:hover { color:var(--text); background:var(--raised); }
+    .sample[aria-current="true"] { color:var(--text); background:var(--raised); border-color:var(--strong); }
+    .sample-name { font:650 13px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .sample-role { color:var(--muted); font-size:11px; }
+    .viewer { position:relative; min-width:0; min-height:0; background:radial-gradient(circle at 50% 42%,#202821 0,#101411 48%,#090b0a 100%); }
+    canvas { display:block; width:100%; height:100%; touch-action:none; }
+    .toolbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; }
+    .control { min-height:42px; padding:8px 12px; color:var(--secondary); background:rgb(12 15 14/.88); border:1px solid var(--line); border-radius:7px; cursor:pointer; backdrop-filter:blur(10px); }
+    .control:hover { color:var(--text); border-color:var(--strong); }
+    .control[aria-pressed="true"] { color:var(--accent); border-color:var(--accent); }
+    .control:focus-visible,.sample:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .mode { position:absolute; left:16px; bottom:16px; display:flex; gap:8px; padding:6px; background:rgb(12 15 14/.9); border:1px solid var(--line); border-radius:9px; backdrop-filter:blur(10px); }
+    .mode .control[aria-pressed="true"] { color:var(--text); background:var(--raised); }
+    #show-baseline[aria-pressed="true"] { border-color:var(--baseline); }
+    #show-boost[aria-pressed="true"] { border-color:var(--boost); }
+    .metrics { position:absolute; top:16px; left:16px; width:min(540px,calc(100% - 250px)); padding:14px; background:rgb(12 15 14/.86); border:1px solid var(--line); border-radius:9px; backdrop-filter:blur(10px); }
+    .metrics h2 { margin:0; font:650 15px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .active-label { margin:5px 0 12px; color:var(--accent); font-size:12px; }
+    table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+    th,td { padding:6px 8px; border-top:1px solid var(--line); text-align:right; }
+    th:first-child,td:first-child { padding-left:0; text-align:left; color:var(--secondary); }
+    th { color:var(--muted); font-size:11px; font-weight:600; }
+    .better { color:var(--accent); }
+    .loading { position:absolute; inset:0; display:grid; place-items:center; color:var(--secondary); background:rgb(9 11 10/.68); pointer-events:none; }
+    .loading[hidden] { display:none; }
+    .error { color:#e59580; }
+    @media (max-width:800px) { header { height:auto; min-height:68px; padding:12px 14px; } .hint { display:none; } main { height:calc(100% - 68px); grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) 160px; } aside { grid-row:2; border:0; border-top:1px solid var(--line); } .intro { display:none; } .sample-list { grid-template-columns:repeat(2,1fr); } .sample { min-width:0; } .sample-role { display:none; } .viewer { grid-row:1; } .metrics { width:calc(100% - 32px); top:auto; bottom:78px; } }
+    @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto!important; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div><div class="eyebrow">Observed support · TSDF A/B</div><h1>Kiểm tra vùng được tăng cường</h1></div>
+    <div class="hint">↑ / ↓ đổi mẫu · A adaptive · B baseline</div>
+  </header>
+  <main>
+    <aside>
+      <div class="intro"><strong>4 ứng viên deferred → pass</strong><br>Adaptive chỉ thêm depth thật quanh vùng support dưới 2 frame.</div>
+      <nav class="sample-list" id="sample-list" aria-label="Mẫu thử nghiệm"></nav>
+    </aside>
+    <section class="viewer" id="viewer" aria-label="Mesh 3D">
+      <div class="metrics">
+        <h2 id="title">Đang tải…</h2>
+        <div class="active-label" id="active-label"></div>
+        <table aria-label="So sánh metric"><thead><tr><th>Metric</th><th>Baseline</th><th>Adaptive</th></tr></thead><tbody id="metric-body"></tbody></table>
+      </div>
+      <div class="toolbar">
+        <button class="control" id="rotate" aria-pressed="true">Đang xoay</button>
+        <button class="control" id="reset">Đặt lại góc</button>
+      </div>
+      <div class="mode" aria-label="Chọn phiên bản mesh">
+        <button class="control" id="show-baseline" aria-pressed="false">B · Baseline</button>
+        <button class="control" id="show-boost" aria-pressed="true">A · Adaptive</button>
+      </div>
+      <div class="loading" id="loading">Đang tải mesh…</div>
+    </section>
+  </main>
+  <script type="module">
+    import * as THREE from 'three';
+    import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const samples = [
+      {name:'26Q52', role:'Deferred → pass', uid:'legacy-26q52-4f2ad020'},
+      {name:'cay_0020_1805', role:'Deferred → pass', uid:'new-cay-0020-1805-089b2211'},
+      {name:'cay_0021_1805', role:'Deferred → pass', uid:'new-cay-0021-1805-263133b9'},
+      {name:'cay_0026_2305_BH3_', role:'Deferred → pass', uid:'new-cay-0026-2305-bh3-fbfabe8b'}
+    ].map(item => ({...item,
+      baseline:`/artifacts/meshes_all/${item.uid}/tensor_v5mm_step3_conf1_adaptive_r35`,
+      boost:`/artifacts/reconstruction_pipeline_pilot/${item.uid}/tensor_v5mm_step3_conf1_adaptive_r35_observed_boost_v1`
+    }));
+    let selected=0, mode='boost', mesh=null, loadToken=0, metrics=null;
+    const list=document.querySelector('#sample-list'), loading=document.querySelector('#loading');
+    const viewer=document.querySelector('#viewer'), loader=new PLYLoader();
+    const scene=new THREE.Scene(), camera=new THREE.PerspectiveCamera(36,1,.001,1000);
+    const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.outputColorSpace=THREE.SRGBColorSpace;
+    renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.15; viewer.prepend(renderer.domElement);
+    scene.add(new THREE.HemisphereLight(0xeaf4ec,0x314038,2.2));
+    const key=new THREE.DirectionalLight(0xffffff,2.4); key.position.set(3,4,5); scene.add(key);
+    const rim=new THREE.DirectionalLight(0xa5d6a7,1.4); rim.position.set(-4,2,-3); scene.add(rim);
+    scene.add(new THREE.GridHelper(4,20,0x526159,0x27302b));
+    const controls=new OrbitControls(camera,renderer.domElement); controls.enableDamping=true; controls.autoRotate=!matchMedia('(prefers-reduced-motion:reduce)').matches; controls.autoRotateSpeed=1.15;
+
+    function rows(){ list.innerHTML=samples.map((s,i)=>`<button class="sample" data-index="${i}" aria-current="${i===selected}"><span><span class="sample-name">${s.name}</span><br><span class="sample-role">${s.role}</span></span><span>›</span></button>`).join(''); }
+    const number=(v,d=1)=>v==null?'—':Number(v).toFixed(d);
+    const percent=v=>v==null?'—':`${(Number(v)*100).toFixed(1)}%`;
+    function metricRows(base,boost){
+      const data=[
+        ['Hit heldout',percent(base.heldout_depth?.mesh_hit_fraction),percent(boost.heldout_depth?.mesh_hit_fraction)],
+        ['Residual p90',`${number((base.heldout_depth?.absolute_residual_p90_m||0)*1000,2)} mm`,`${number((boost.heldout_depth?.absolute_residual_p90_m||0)*1000,2)} mm`],
+        ['Azimuth p10',percent(base.mesh?.azimuth_coverage_p10),percent(boost.mesh?.azimuth_coverage_p10)],
+        ['Boundary edge',number(base.mesh?.boundary_edges,0),number(boost.mesh?.boundary_edges,0)],
+        ['Diện tích',`${number(base.mesh?.surface_area_m2,3)} m²`,`${number(boost.mesh?.surface_area_m2,3)} m²`]
+      ];
+      document.querySelector('#metric-body').innerHTML=data.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td class="better">${r[2]}</td></tr>`).join('');
+    }
+    function compatible(geometry){ for(const name of ['position','normal']){const a=geometry.getAttribute(name); if(a?.array instanceof Float64Array) geometry.setAttribute(name,new THREE.Float32BufferAttribute(a.array,a.itemSize,a.normalized));} return geometry; }
+    function frame(geometry){ geometry.computeBoundingBox(); const center=new THREE.Vector3(),size=new THREE.Vector3(); geometry.boundingBox.getCenter(center); geometry.boundingBox.getSize(size); geometry.translate(-center.x,-center.y,-center.z); geometry.computeBoundingSphere(); const radius=Math.max(geometry.boundingSphere.radius,.01),distance=radius/Math.sin(THREE.MathUtils.degToRad(camera.fov/2))*1.08; camera.near=Math.max(radius/1000,.0001); camera.far=radius*100; camera.position.set(distance*.72,radius*.18,distance*.72); camera.updateProjectionMatrix(); controls.target.set(0,0,0); controls.minDistance=radius*.35; controls.maxDistance=radius*8; controls.update(); }
+    async function load(){
+      const token=++loadToken,s=samples[selected],path=s[mode]; loading.hidden=false; loading.textContent='Đang tải mesh…'; loading.classList.remove('error');
+      document.querySelector('#title').textContent=`${s.name} · ${s.role}`; document.querySelector('#active-label').textContent=mode==='boost'?'Adaptive observed-support':'Baseline production';
+      document.querySelector('#show-baseline').setAttribute('aria-pressed',mode==='baseline'); document.querySelector('#show-boost').setAttribute('aria-pressed',mode==='boost'); rows();
+      try {
+        const [base,boost,geometry]=await Promise.all([
+          fetch(`${s.baseline}/metrics.json`).then(r=>{if(!r.ok)throw Error('metrics baseline');return r.json();}),
+          fetch(`${s.boost}/metrics.json`).then(r=>{if(!r.ok)throw Error('metrics adaptive');return r.json();}),
+          new Promise((resolve,reject)=>loader.load(`${path}/trunk_mesh_tsdf.ply`,resolve,undefined,reject))
+        ]);
+        if(token!==loadToken){geometry.dispose();return;} metrics={base,boost}; metricRows(base,boost);
+        if(mesh){scene.remove(mesh);mesh.geometry.dispose();mesh.material.dispose();}
+        compatible(geometry); geometry.computeVertexNormals();
+        mesh=new THREE.Mesh(geometry,new THREE.MeshStandardMaterial({vertexColors:Boolean(geometry.getAttribute('color')),color:geometry.getAttribute('color')?0xffffff:0xb9c5bd,roughness:.88,metalness:0,side:THREE.DoubleSide})); scene.add(mesh); frame(geometry); loading.hidden=true;
+      } catch(error){ if(token!==loadToken)return; loading.hidden=false; loading.textContent='Không tải được mesh hoặc metrics'; loading.classList.add('error'); console.error(error); }
+    }
+    function choose(index){ selected=(index+samples.length)%samples.length; load(); }
+    list.addEventListener('click',e=>{const button=e.target.closest('[data-index]');if(button)choose(Number(button.dataset.index));});
+    document.querySelector('#show-baseline').addEventListener('click',()=>{mode='baseline';load();});
+    document.querySelector('#show-boost').addEventListener('click',()=>{mode='boost';load();});
+    document.querySelector('#rotate').addEventListener('click',e=>{controls.autoRotate=!controls.autoRotate;e.currentTarget.setAttribute('aria-pressed',controls.autoRotate);e.currentTarget.textContent=controls.autoRotate?'Đang xoay':'Đã dừng';});
+    document.querySelector('#reset').addEventListener('click',()=>mesh&&frame(mesh.geometry));
+    addEventListener('keydown',e=>{if(e.key==='ArrowDown'){e.preventDefault();choose(selected+1);}else if(e.key==='ArrowUp'){e.preventDefault();choose(selected-1);}else if(e.key.toLowerCase()==='a'){mode='boost';load();}else if(e.key.toLowerCase()==='b'){mode='baseline';load();}});
+    new ResizeObserver(()=>{const w=viewer.clientWidth,h=viewer.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/Math.max(h,1);camera.updateProjectionMatrix();}).observe(viewer);
+    function animate(){requestAnimationFrame(animate);controls.update();renderer.render(scene,camera);} rows();load();animate();
+  </script>
+</body>
+</html>

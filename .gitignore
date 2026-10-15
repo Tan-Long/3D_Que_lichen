@@ -14,6 +14,14 @@
 # Raw/input datasets
 Raw_data/
 missing_data/
+data raw/
+artifacts/
+quarantine/
+samples/
+vendor/
+.cache/
+.tmp/
+.scratch/
 
 # Large geometry and generated artifacts
 *.ply
@@ -22,6 +30,20 @@ missing_data/
 *.las
 *.laz
 *.pcd
+*.npz
+*.npy
+*.pth
+*.pt
+*.ckpt
+*.mp4
+*.mov
+*.rar
+
+# Manifests may contain local paths and capture locations
+manifests/*
+!manifests/README.md
+research_pipeline/manifests/*
+!research_pipeline/manifests/README.md
 
 # Generated outputs/reports
 export_lichen_data.csv
