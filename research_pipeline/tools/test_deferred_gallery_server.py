@@ -29,6 +29,8 @@ class ReviewStoreTest(unittest.TestCase):
         self.assertIn('class="inspector"', html)
         self.assertIn('id="review-progress"', html)
         self.assertIn("function visibleIndices()", html)
+        self.assertIn("key==='q'", html)
+        self.assertIn("<kbd>Q</kbd> đổi lớp", html)
         self.assertIn("material_probability_mesh.ply", html)
         self.assertIn("variantParam==='dinov3full'", html)
         self.assertIn("/api/dinov3-k3-catalog", html)
